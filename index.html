@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ajustement des Prix — Marjane Mall</title>
+  <link rel="stylesheet" href="assets/styles.css" />
+</head>
+<body>
+
+  <header>
+    <div class="header-inner">
+      <div class="logo">MM</div>
+      <div>
+        <h1>Ajustement des Prix</h1>
+        <p>Automatisation de l'alignement des prix — Marjane Mall</p>
+      </div>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ─── Section 1 : Fichiers Actif ─────────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <span class="step-badge">1</span>
+        <h2>Fichiers Actif — catalogue mmall + 3 magasins Marjane</h2>
+      </div>
+      <div class="card-body">
+        <div class="uploads-grid">
+
+          <div class="upload-zone" data-key="mmall">
+            <div class="upload-icon">🏪</div>
+            <div class="upload-label">Actif mmall</div>
+            <div class="upload-hint">Feuille : catalogue</div>
+            <input type="file" accept=".xlsx,.xls" class="file-input" />
+            <div class="file-name"></div>
+          </div>
+
+          <div class="upload-zone" data-key="marj1">
+            <div class="upload-icon">🔴</div>
+            <div class="upload-label">Actif marjane 1</div>
+            <div class="upload-hint">Feuille : catalogue</div>
+            <input type="file" accept=".xlsx,.xls" class="file-input" />
+            <div class="file-name"></div>
+          </div>
+
+          <div class="upload-zone" data-key="marj2">
+            <div class="upload-icon">🔴</div>
+            <div class="upload-label">Actif marjane 2</div>
+            <div class="upload-hint">Feuille : catalogue</div>
+            <input type="file" accept=".xlsx,.xls" class="file-input" />
+            <div class="file-name"></div>
+          </div>
+
+          <div class="upload-zone" data-key="marj3">
+            <div class="upload-icon">🔴</div>
+            <div class="upload-label">Actif marjane 3</div>
+            <div class="upload-hint">Feuille : catalogue</div>
+            <input type="file" accept=".xlsx,.xls" class="file-input" />
+            <div class="file-name"></div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 2 : Listes de référence ─────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <span class="step-badge">2</span>
+        <h2>Listes de référence — Base retail · Liquidation · Exclus</h2>
+      </div>
+      <div class="card-body">
+        <div class="uploads-grid">
+
+          <div class="upload-zone" data-key="baseRetail">
+            <div class="upload-icon">📋</div>
+            <div class="upload-label">Base retail</div>
+            <div class="upload-hint">Feuille : Feuil1<br/>Types produits (LOCAL B1)</div>
+            <input type="file" accept=".xlsx,.xls" class="file-input" />
+            <div class="file-name"></div>
+          </div>
+
+          <div class="upload-zone" data-key="liquidation">
+            <div class="upload-icon">🚫</div>
+            <div class="upload-label">Liste sku — liquidation</div>
+            <div class="upload-hint">Feuille : pour ajustement<br/>SKU à ne pas toucher</div>
+            <input type="file" accept=".xlsx,.xls" class="file-input" />
+            <div class="file-name"></div>
+          </div>
+
+          <div class="upload-zone" data-key="exclus">
+            <div class="upload-icon">⛔</div>
+            <div class="upload-label">Liste sku — exclus</div>
+            <div class="upload-hint">Feuille : Feuil1<br/>EAN indicateur l'Oréal</div>
+            <input type="file" accept=".xlsx,.xls" class="file-input" />
+            <div class="file-name"></div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 3 : Données financières ─────────────────── -->
+    <section class="card">
+      <div class="card-header">
+        <span class="step-badge">3</span>
+        <h2>Données financières — Marge min · PA réception · Récaps</h2>
+      </div>
+      <div class="card-body">
+        <div class="uploads-grid">
+
+          <div class="upload-zone" data-key="margeMin">
+            <div class="upload-icon">📊</div>
+            <div class="upload-label">Marge min</div>
+            <div class="upload-hint">Feuille : Feuil1<br/>Marge minimale par rayon</div>
+            <input type="file" accept=".xlsx,.xls" class="file-input" />
+            <div class="file-name"></div>
+          </div>
+
+          <div class="upload-zone" data-key="paReception">
+            <div class="upload-icon">💰</div>
+            <div class="upload-label">PA réception</div>
+            <div class="upload-hint">Feuille : Feuil2<br/>Prix d'achat réception</div>
+            <input type="file" accept=".xlsx,.xls" class="file-input" />
+            <div class="file-name"></div>
+          </div>
+
+          <div class="upload-zone" data-key="recapMarjane">
+            <div class="upload-icon">📈</div>
+            <div class="upload-label">Récap marjane</div>
+            <div class="upload-hint">Feuille : Sheet1<br/>PA moyen (qté / valeur)</div>
+            <input type="file" accept=".xlsx,.xls" class="file-input" />
+            <div class="file-name"></div>
+          </div>
+
+          <div class="upload-zone" data-key="recapMmall">
+            <div class="upload-icon">📉</div>
+            <div class="upload-label">Récap mmall</div>
+            <div class="upload-hint">Feuille : Sheet 1<br/>PA net · rayon · fournisseur</div>
+            <input type="file" accept=".xlsx,.xls" class="file-input" />
+            <div class="file-name"></div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Counter + Action button ─────────────────────────── -->
+    <p class="file-counter" id="file-counter">
+      <span id="count">0</span> / 11 fichiers chargés
+    </p>
+
+    <div class="action-bar">
+      <button class="btn btn--primary" id="btn-process" disabled>
+        Générer l'ajustement
+      </button>
+    </div>
+
+    <!-- ─── Log + Result ─────────────────────────────────────── -->
+    <section class="card hidden" id="output-card">
+      <div class="card-body">
+        <div class="log-block" id="log-block"></div>
+        <div class="result-block hidden" id="result-block">
+          <div class="result-icon">✅</div>
+          <h3>Traitement terminé avec succès !</h3>
+          <p>Votre fichier Excel à 3 feuilles est prêt.</p>
+          <div class="result-stats">
+            <div class="stat">
+              <div class="stat-val" id="stat-cat">—</div>
+              <div class="stat-lbl">lignes catalogue</div>
+            </div>
+            <div class="stat">
+              <div class="stat-val" id="stat-baisse">—</div>
+              <div class="stat-lbl">SKU à baisser</div>
+            </div>
+            <div class="stat">
+              <div class="stat-val" id="stat-aug">—</div>
+              <div class="stat-lbl">SKU à augmenter</div>
+            </div>
+          </div>
+          <button class="btn btn--success" id="btn-download">
+            Télécharger le résultat Excel
+          </button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    Marjane Mall — Ajustement des Prix &nbsp;|&nbsp; Traitement 100 % local, aucune donnée envoyée sur internet
+  </footer>
+
+  <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>
