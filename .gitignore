@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+gradio_out.txt
+gradio_err.txt
+inputs/
+output/
+process/
