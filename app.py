@@ -663,57 +663,153 @@ def run_workflow(
 
 
 def build_ui():
-    with gr.Blocks(title="Ajustement des Prix - Marjane Mall") as demo:
-        gr.Markdown("# Ajustement des Prix - Marjane Mall")
-        gr.Markdown(
-            "Cet outil automatise l'alignement des prix. "
-            f"Chargez les **{N_INPUT_FILES} fichiers Excel** repartis en 3 sections, "
-            "puis cliquez sur **Generer l'ajustement**. "
-            "Le resultat est un fichier Excel a 3 feuilles : "
-            f"*{OUT_SHEET_CAT}*, *{OUT_SHEET_BAISSE}*, *{OUT_SHEET_AUG}*."
-        )
+    css = """
+    /* ── Marjane Mall brand colours ── */
+    .mj-header {
+        background: linear-gradient(135deg, #b71c1c 0%, #e53935 100%);
+        border-radius: 12px;
+        padding: 28px 36px;
+        margin-bottom: 12px;
+        box-shadow: 0 4px 20px rgba(183,28,28,.22);
+    }
+    .mj-header h1 {
+        color: #fff !important;
+        font-size: 1.85rem;
+        font-weight: 700;
+        margin: 0 0 6px;
+        letter-spacing: -.3px;
+    }
+    .mj-header p {
+        color: rgba(255,255,255,.88);
+        font-size: .96rem;
+        margin: 0;
+        line-height: 1.6;
+    }
+    .mj-header strong { color: #ffeb3b; }
 
+    /* ── File-upload section cards ── */
+    .card-section {
+        border-top: 3px solid #e53935 !important;
+        border-radius: 10px !important;
+        padding: 4px 0 8px !important;
+    }
+
+    /* ── Primary button ── */
+    button.primary {
+        background: linear-gradient(90deg, #c62828, #e53935) !important;
+        border: none !important;
+        box-shadow: 0 3px 12px rgba(198,40,40,.28) !important;
+        font-size: 1.07rem !important;
+        font-weight: 600 !important;
+        letter-spacing: .3px !important;
+        transition: box-shadow .18s, transform .18s !important;
+    }
+    button.primary:hover {
+        box-shadow: 0 5px 20px rgba(198,40,40,.42) !important;
+        transform: translateY(-1px) !important;
+    }
+
+    /* ── Log textarea: monospace ── */
+    .log-area textarea {
+        font-family: Consolas, 'Courier New', monospace !important;
+        font-size: .84rem !important;
+        line-height: 1.55 !important;
+        color: #1a1a2e !important;
+    }
+
+    /* ── Section headings inside cards ── */
+    .card-section h3 {
+        margin-top: 8px !important;
+        margin-bottom: 2px !important;
+        font-size: 1rem !important;
+        color: #b71c1c !important;
+    }
+    """
+
+    with gr.Blocks(
+        title="Ajustement des Prix — Marjane Mall",
+        theme=gr.themes.Soft(),
+        css=css,
+    ) as demo:
+
+        # ── Header ────────────────────────────────────────────────────────
+        gr.HTML(f"""
+        <div class="mj-header">
+            <h1>Ajustement des Prix — Marjane Mall</h1>
+            <p>
+                Automatisation de l'alignement des prix sur <strong>{N_INPUT_FILES} fichiers sources</strong>.<br>
+                Chargez les fichiers ci-dessous puis cliquez sur
+                <strong>Générer l'ajustement</strong> pour obtenir le résultat
+                en 3 feuilles Excel.
+            </p>
+        </div>
+        """)
+
+        # ── File upload sections ───────────────────────────────────────────
+        with gr.Row(equal_height=True):
+            with gr.Column():
+                with gr.Group(elem_classes="card-section"):
+                    gr.Markdown(
+                        "### Fichiers Actif\n"
+                        f"_Catalogue mmall + 3 magasins Marjane (feuille `{SHEET_ACTIF}`)_"
+                    )
+                    f_mmall = gr.File(label="Actif mmall",     file_types=[".xlsx", ".xls"])
+                    f_marj1 = gr.File(label="Actif marjane 1", file_types=[".xlsx", ".xls"])
+                    f_marj2 = gr.File(label="Actif marjane 2", file_types=[".xlsx", ".xls"])
+                    f_marj3 = gr.File(label="Actif marjane 3", file_types=[".xlsx", ".xls"])
+
+            with gr.Column():
+                with gr.Group(elem_classes="card-section"):
+                    gr.Markdown(
+                        "### Listes de référence\n"
+                        "_Master produit (Base retail), SKU liquidation & EAN exclus_"
+                    )
+                    f_base_retail = gr.File(label="Base retail",             file_types=[".xlsx", ".xls"])
+                    f_liquidation = gr.File(label="Liste sku — liquidation",  file_types=[".xlsx", ".xls"])
+                    f_exclus      = gr.File(label="Liste sku — exclus",       file_types=[".xlsx", ".xls"])
+
+            with gr.Column():
+                with gr.Group(elem_classes="card-section"):
+                    gr.Markdown(
+                        "### Données financières\n"
+                        "_Marge min · PA réception · Récaps Marjane & Mmall_"
+                    )
+                    f_marge_min     = gr.File(label="Marge min",      file_types=[".xlsx", ".xls"])
+                    f_pa_reception  = gr.File(label="PA réception",   file_types=[".xlsx", ".xls"])
+                    f_recap_marjane = gr.File(label="Récap marjane",  file_types=[".xlsx", ".xls"])
+                    f_recap_mmall   = gr.File(label="Récap mmall",    file_types=[".xlsx", ".xls"])
+
+        # ── Centered action button ─────────────────────────────────────────
         with gr.Row():
-            with gr.Column():
-                gr.Markdown(
-                    "### 1. Fichiers Actif\n"
-                    "Le catalogue mmall et les 3 catalogues concurrents Marjane "
-                    f"(feuille `{SHEET_ACTIF}`)."
+            with gr.Column(scale=1, min_width=0): pass
+            with gr.Column(scale=2):
+                btn = gr.Button("Générer l'ajustement", variant="primary", size="lg")
+            with gr.Column(scale=1, min_width=0): pass
+
+        # ── Output area ───────────────────────────────────────────────────
+        with gr.Row():
+            with gr.Column(scale=3):
+                status = gr.Textbox(
+                    label="Journal d'exécution",
+                    lines=14,
+                    interactive=False,
+                    placeholder=(
+                        "Les étapes du traitement s'afficheront ici "
+                        "après avoir cliqué sur Générer…"
+                    ),
+                    elem_classes="log-area",
                 )
-                f_mmall = gr.File(label="Actif mmall")
-                f_marj1 = gr.File(label="Actif marjane 1")
-                f_marj2 = gr.File(label="Actif marjane 2")
-                f_marj3 = gr.File(label="Actif marjane 3")
-
-            with gr.Column():
+            with gr.Column(scale=2):
+                out_file = gr.File(label="Résultat — Télécharger le fichier Excel")
                 gr.Markdown(
-                    "### 2. Listes de reference\n"
-                    "Master produit (Base retail), SKU a exclure (liquidation), "
-                    "et indicateur EAN (exclus)."
+                    "**Feuilles du fichier résultat :**\n\n"
+                    f"- **`{OUT_SHEET_CAT}`** — tous les produits LOCAL B1 "
+                    "avec marges calculées\n"
+                    f"- **`{OUT_SHEET_BAISSE}`** — SKU à baisser "
+                    "(NV PRIX = Min Prix Marjane)\n"
+                    f"- **`{OUT_SHEET_AUG}`** — SKU à augmenter "
+                    "(saise PER + état Actif)\n"
                 )
-                f_base_retail = gr.File(label="Base retail")
-                f_liquidation = gr.File(label="Liste sku - liquidation")
-                f_exclus      = gr.File(label="Liste sku - exclus")
-
-            with gr.Column():
-                gr.Markdown(
-                    "### 3. Donnees financieres\n"
-                    "Marge minimale par rayon, prix d'achat (PA reception), "
-                    "et les deux recaps (marjane / mmall)."
-                )
-                f_marge_min     = gr.File(label="Marge min")
-                f_pa_reception  = gr.File(label="PA reception")
-                f_recap_marjane = gr.File(label="Recap marjane")
-                f_recap_mmall   = gr.File(label="Recap mmall")
-
-        btn = gr.Button("Generer l'ajustement", variant="primary", size="lg")
-
-        status = gr.Textbox(
-            label="Statut / journal",
-            lines=14,
-            interactive=False,
-        )
-        out_file = gr.File(label="Fichier resultat (telechargement)")
 
         btn.click(
             fn=run_workflow,
