@@ -826,4 +826,7 @@ def build_ui():
 
 if __name__ == "__main__":
     app = build_ui()
-    app.launch()
+    app.launch(
+        auth=[("marjane", "ajustement2024")],
+        auth_message="Marjane Mall — Ajustement des Prix",
+    )
