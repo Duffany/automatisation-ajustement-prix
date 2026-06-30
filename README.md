@@ -2,7 +2,7 @@
 title: Ajustement des Prix Marjane Mall
 emoji: 🏪
 colorFrom: red
-colorTo: orange
+colorTo: red
 sdk: gradio
 sdk_version: "4.44.1"
 app_file: app.py
