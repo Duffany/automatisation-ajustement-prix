@@ -348,6 +348,17 @@ async function pipeline() {
     return { ...r, 'Ecart Vs BO MM': (isNum(m) && isNum(p)) ? m - p : 0 };
   });
 
+  // ── Diagnostics (logged to UI) ────────────────────────────
+  const ecartNonZero = df.filter(r => r['Ecart Vs BO MM'] !== 0).length;
+  log(`[diag] Écarts non nuls : ${ecartNonZero} / ${df.length}`, 'info');
+  if (df.length > 0) {
+    const s = df[0];
+    const prixKeys = Object.keys(s).filter(k => k.toUpperCase().includes('PRIX'));
+    log(`[diag] Colonnes PRIX trouvées : ${prixKeys.join(', ')}`, 'info');
+    log(`[diag] Row 0 — PRIX:${s['PRIX']} | MinMJ:${s['Min Prix Marjane']} | Ecart:${s['Ecart Vs BO MM']} | MIN%:${s['MIN %']} | RAYON:${s['RAYON']}`, 'info');
+    log(`[diag] Row 0 — MARGE_RECAP:${s['MARGE RECAP']?.toFixed(4)} | MARGE_Rec:${s['MARGE Réception']?.toFixed(4)} | MARGE_Moy:${s['MARGE Moyen']?.toFixed(4)}`, 'info');
+  }
+
   // ── Step 20 : action ─────────────────────────────────────
   log("Étape 20 : calcul de l'action...");
   df = df.map(r => {
