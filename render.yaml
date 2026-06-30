@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: prix-ajustement
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    plan: free
+    envVars:
+      - key: APP_USER
+        value: marjane
+      - key: APP_PASS
+        generateValue: false
+        value: ajustement2024

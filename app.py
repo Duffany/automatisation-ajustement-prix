@@ -10,6 +10,9 @@ import os
 import traceback
 import tempfile
 
+APP_USER = os.environ.get("APP_USER", "marjane")
+APP_PASS = os.environ.get("APP_PASS", "ajustement2024")
+
 import numpy as np
 import pandas as pd
 import gradio as gr
@@ -825,8 +828,11 @@ def build_ui():
 
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 7860))
     app = build_ui()
     app.launch(
-        auth=[("marjane", "ajustement2024")],
+        server_name="0.0.0.0",
+        server_port=port,
+        auth=[(APP_USER, APP_PASS)],
         auth_message="Marjane Mall — Ajustement des Prix",
     )
