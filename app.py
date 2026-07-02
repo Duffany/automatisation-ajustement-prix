@@ -503,26 +503,17 @@ def process(
 
     # --- Step 21 : saise ----------------------------------------------------
     log("Etape 21 : saise...")
+    # Lookup on GTIN (EAN) first, then fall back to CODE_INTERNE — same pattern
+    # as RAYON / Fournisseur. CODE_INTERNE is the internal product id, so a
+    # match is valid even when the barcode on file differs from the recap row's
+    # EAN (repackaging, EAN-13 vs GTIN-14, supplier change). The previous
+    # EAN-equality guard rejected every real CODE_INTERNE fallback, which is why
+    # some saisonality (SAIS) / etat values were missing.
     map_sais_ean = build_lookup(recap_mmall, COL_MM_EAN, COL_MM_SAIS)
     map_sais_ci  = build_lookup(recap_mmall, COL_MM_CI,  COL_MM_SAIS)
-
-    # When falling back on CODE_INTERNE, only accept the match if the row's EAN
-    # in Recap mmall equals our item's GTIN — prevents inheriting attributes
-    # from a different product that happens to share the same internal code.
-    map_ci_to_ean_mmall = build_lookup(recap_mmall, COL_MM_CI, COL_MM_EAN)
-
-    def lookup_mmall_validated(row, primary_map, fallback_map):
-        g   = norm_key(row.get(COL_GTIN))
-        if g is not None and g in primary_map:
-            return primary_map[g]
-        ref = norm_key(row.get(COL_REF))
-        if ref is not None and ref in fallback_map:
-            if norm_key(map_ci_to_ean_mmall.get(ref)) == g:
-                return fallback_map[ref]
-        return np.nan
-
     df["saise"] = df.apply(
-        lambda r: lookup_mmall_validated(r, map_sais_ean, map_sais_ci), axis=1
+        lambda r: lookup_with_fallback(r, COL_GTIN, map_sais_ean, COL_REF, map_sais_ci),
+        axis=1,
     )
 
     # --- Step 22 : etat -----------------------------------------------------
@@ -530,7 +521,8 @@ def process(
     map_etat_ean = build_lookup(recap_mmall, COL_MM_EAN, COL_MM_ETAT)
     map_etat_ci  = build_lookup(recap_mmall, COL_MM_CI,  COL_MM_ETAT)
     df["etat"] = df.apply(
-        lambda r: lookup_mmall_validated(r, map_etat_ean, map_etat_ci), axis=1
+        lambda r: lookup_with_fallback(r, COL_GTIN, map_etat_ean, COL_REF, map_etat_ci),
+        axis=1,
     )
 
     # --- Build catalogue output ---------------------------------------------
@@ -562,7 +554,13 @@ def process(
 
     # --- Step 23 : SKU baisse -----------------------------------------------
     log("Etape 23 : feuille SKU baisse...")
-    baisse_src = df[df["action"] == ACTION_DOWN].copy()
+    # Rule : products on the "exclus" list (flagged in the "l'oreal" column) are
+    # excluded from destockage — i.e. removed from SKU baisse only. They stay
+    # eligible for SKU augmentation.
+    baisse_src = df[(df["action"] == ACTION_DOWN) & (df["l'oreal"].isna())].copy()
+    n_excl_baisse = int(((df["action"] == ACTION_DOWN) & (df["l'oreal"].notna())).sum())
+    if n_excl_baisse:
+        log(f"  {n_excl_baisse} produit(s) exclu(s) du destockage (liste exclus).")
     if len(baisse_src) > 0:
         df_baisse = pd.DataFrame({
             COL_MODIFIER:  MODIFIER_FLAG,

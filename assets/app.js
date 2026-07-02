@@ -72,22 +72,101 @@ function log(msg, type = '') {
 }
 
 // ── Excel reading ──────────────────────────────────────────
-function readSheet(file, sheetHint) {
+function readWorkbook(file, opts) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = e => {
       try {
-        const wb     = XLSX.read(e.target.result, { type: 'array', cellDates: false });
-        const target = sheetHint.trim().toLowerCase();
-        const sName  = wb.SheetNames.find(s => s.trim().toLowerCase() === target)
-                       ?? wb.SheetNames[0];
-        const rows   = XLSX.utils.sheet_to_json(wb.Sheets[sName], { defval: null });
-        resolve(rows);
+        resolve(XLSX.read(e.target.result, { type: 'array', cellDates: false, ...(opts || {}) }));
       } catch (err) { reject(err); }
     };
     reader.onerror = reject;
     reader.readAsArrayBuffer(file);
   });
+}
+
+function sheetFromWb(wb, sheetHint) {
+  const target = sheetHint.trim().toLowerCase();
+  const sName  = wb.SheetNames.find(s => s.trim().toLowerCase() === target) ?? wb.SheetNames[0];
+  return wb.Sheets[sName];
+}
+
+function readSheet(file, sheetHint) {
+  return readWorkbook(file).then(wb =>
+    XLSX.utils.sheet_to_json(sheetFromWb(wb, sheetHint), { defval: null })
+  );
+}
+
+// Recap mmall is enormous (~292k rows × 43 cols → a 513 MB sheet XML). Running
+// sheet_to_json on it hangs the browser for many minutes. Instead we parse in
+// SheetJS "dense" mode (fast, ~40 s) and walk only the 7 columns we actually
+// use, building every lookup Map in a couple of passes — then let the giant
+// cell store be garbage-collected. Returns the resolved column indexes + rows.
+const RECAP_COLS = ['EAN', 'CODE_INTERNE', 'PA_NET', 'LIB_RAY', 'LIB_FOURNISSEUR', 'SAIS', 'ETAT'];
+
+async function readRecapDense(file, sheetHint, wantCols) {
+  const wb = await readWorkbook(file, {
+    dense: true, cellStyles: false, cellNF: false, cellHTML: false,
+  });
+  const ws    = sheetFromWb(wb, sheetHint);
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const nRows = range.e.r + 1, nCols = range.e.c + 1;
+  // Dense rows live under ws['!data'] (SheetJS ≥ 0.20) or directly on ws[r] (older).
+  const dataRows = ws['!data'] || ws;
+  const hdr = dataRows[0] || [];
+  const idx = {};
+  for (let c = 0; c < nCols; c++) {
+    const cell = hdr[c];
+    if (cell && cell.v != null) {
+      const name = String(cell.v).trim();
+      if (wantCols.includes(name) && !(name in idx)) idx[name] = c;
+    }
+  }
+  for (const c of wantCols) {
+    if (!(c in idx)) throw new Error(`Colonne '${c}' introuvable dans Recap mmall.`);
+  }
+  return { nRows, dataRows, idx };
+}
+
+// Build a Map(normKey(keyCol) -> valueCol) from a dense recap context, using
+// the exact same skip rules as buildLookup (first non-null value wins).
+function denseLookup(ctx, keyCol, valueCol) {
+  const { nRows, dataRows, idx } = ctx;
+  const ki = idx[keyCol], vi = idx[valueCol];
+  const map = new Map();
+  for (let r = 1; r < nRows; r++) {
+    const row = dataRows[r];
+    if (!row) continue;
+    const kc = row[ki];
+    const k  = kc ? normKey(kc.v) : null;
+    if (k === null) continue;
+    const vc = row[vi];
+    const v  = vc ? vc.v : undefined;
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'number' && (isNaN(v) || !isFinite(v))) continue;
+    if (!map.has(k)) map.set(k, v);
+  }
+  return map;
+}
+
+// Load every Recap-mmall lookup Map in one place, then drop the dense cell
+// store so ~2 GB of parsed cells can be reclaimed before the pipeline continues.
+async function loadRecapMaps(file, sheetHint) {
+  const ctx = await readRecapDense(file, sheetHint, RECAP_COLS);
+  const maps = {
+    paEan:   denseLookup(ctx, 'EAN',          'PA_NET'),
+    paCi:    denseLookup(ctx, 'CODE_INTERNE', 'PA_NET'),
+    rayEan:  denseLookup(ctx, 'EAN',          'LIB_RAY'),
+    rayCi:   denseLookup(ctx, 'CODE_INTERNE', 'LIB_RAY'),
+    fourEan: denseLookup(ctx, 'EAN',          'LIB_FOURNISSEUR'),
+    fourCi:  denseLookup(ctx, 'CODE_INTERNE', 'LIB_FOURNISSEUR'),
+    saisEan: denseLookup(ctx, 'EAN',          'SAIS'),
+    saisCi:  denseLookup(ctx, 'CODE_INTERNE', 'SAIS'),
+    etatEan: denseLookup(ctx, 'EAN',          'ETAT'),
+    etatCi:  denseLookup(ctx, 'CODE_INTERNE', 'ETAT'),
+    ciEan:   denseLookup(ctx, 'CODE_INTERNE', 'EAN'),
+  };
+  return maps;
 }
 
 // ── Helpers (mirror app.py) ────────────────────────────────
@@ -161,10 +240,10 @@ async function runProcess() {
 }
 
 async function pipeline() {
-  log('Chargement des 11 fichiers en parallèle...');
+  log('Chargement des 10 fichiers standards...');
 
   const [mmall, marj1, marj2, marj3, baseRetail, liquidation, exclus,
-         margeMin, paReception, recapMarjane, recapMmall] = await Promise.all([
+         margeMin, paReception, recapMarjane] = await Promise.all([
     readSheet(files.mmall,        'catalogue'),
     readSheet(files.marj1,        'catalogue'),
     readSheet(files.marj2,        'catalogue'),
@@ -175,10 +254,15 @@ async function pipeline() {
     readSheet(files.margeMin,     'Feuil1'),
     readSheet(files.paReception,  'Feuil2'),
     readSheet(files.recapMarjane, 'Sheet1'),
-    readSheet(files.recapMmall,   'Sheet 1'),
   ]);
 
   log(`Actif mmall chargé : ${mmall.length} lignes.`);
+
+  // Recap mmall is huge — parse it separately in dense mode (see loadRecapMaps).
+  log('Analyse du fichier Recap mmall (volumineux, ~1 min)...', 'warn');
+  await new Promise(r => setTimeout(r, 30));   // let the log paint before the parse blocks the UI
+  const recapMaps = await loadRecapMaps(files.recapMmall, 'Sheet 1');
+  log('Recap mmall analysé.');
 
   // Find PRIX BARRÉ column in mmall
   const barreCol = mmall.length > 0 ? findBarreCol(Object.keys(mmall[0])) : null;
@@ -261,8 +345,8 @@ async function pipeline() {
 
   // ── Step 9 : PA RECAP ─────────────────────────────────────
   log('Étape 9 : PA RECAP...');
-  const mapPaRecapEan = buildLookup(recapMmall, 'EAN',          'PA_NET');
-  const mapPaRecapCi  = buildLookup(recapMmall, 'CODE_INTERNE', 'PA_NET');
+  const mapPaRecapEan = recapMaps.paEan;
+  const mapPaRecapCi  = recapMaps.paCi;
   df = df.map(r => ({
     ...r,
     'PA RECAP': toNum(lookupFallback(r, 'GTIN', mapPaRecapEan, 'REF', mapPaRecapCi) ?? NaN),
@@ -305,14 +389,14 @@ async function pipeline() {
 
   // ── Step 16 : RAYON ───────────────────────────────────────
   log('Étape 16 : RAYON...');
-  const mapRayEan = buildLookup(recapMmall, 'EAN',          'LIB_RAY');
-  const mapRayCi  = buildLookup(recapMmall, 'CODE_INTERNE', 'LIB_RAY');
+  const mapRayEan = recapMaps.rayEan;
+  const mapRayCi  = recapMaps.rayCi;
   df = df.map(r => ({ ...r, 'RAYON': lookupFallback(r, 'GTIN', mapRayEan, 'REF', mapRayCi) }));
 
   // ── Step 17 : Fournisseur ─────────────────────────────────
   log('Étape 17 : Fournisseur...');
-  const mapFourEan = buildLookup(recapMmall, 'EAN',          'LIB_FOURNISSEUR');
-  const mapFourCi  = buildLookup(recapMmall, 'CODE_INTERNE', 'LIB_FOURNISSEUR');
+  const mapFourEan = recapMaps.fourEan;
+  const mapFourCi  = recapMaps.fourCi;
   df = df.map(r => ({ ...r, 'Fournisseur': lookupFallback(r, 'GTIN', mapFourEan, 'REF', mapFourCi) }));
 
   // ── Step 18 : MIN % ───────────────────────────────────────
@@ -348,17 +432,6 @@ async function pipeline() {
     return { ...r, 'Ecart Vs BO MM': (isNum(m) && isNum(p)) ? m - p : 0 };
   });
 
-  // ── Diagnostics (logged to UI) ────────────────────────────
-  const ecartNonZero = df.filter(r => r['Ecart Vs BO MM'] !== 0).length;
-  log(`[diag] Écarts non nuls : ${ecartNonZero} / ${df.length}`, 'info');
-  if (df.length > 0) {
-    const s = df[0];
-    const prixKeys = Object.keys(s).filter(k => k.toUpperCase().includes('PRIX'));
-    log(`[diag] Colonnes PRIX trouvées : ${prixKeys.join(', ')}`, 'info');
-    log(`[diag] Row 0 — PRIX:${s['PRIX']} | MinMJ:${s['Min Prix Marjane']} | Ecart:${s['Ecart Vs BO MM']} | MIN%:${s['MIN %']} | RAYON:${s['RAYON']}`, 'info');
-    log(`[diag] Row 0 — MARGE_RECAP:${s['MARGE RECAP']?.toFixed(4)} | MARGE_Rec:${s['MARGE Réception']?.toFixed(4)} | MARGE_Moy:${s['MARGE Moyen']?.toFixed(4)}`, 'info');
-  }
-
   // ── Step 20 : action ─────────────────────────────────────
   log("Étape 20 : calcul de l'action...");
   df = df.map(r => {
@@ -378,33 +451,33 @@ async function pipeline() {
     return { ...r, action: '' };
   });
 
-  // ── Steps 21-22 : saise + etat (with EAN validation) ─────
+  // ── Steps 21-22 : saise + etat ───────────────────────────
+  // Lookup on GTIN (EAN) first, then fall back to CODE_INTERNE — same pattern
+  // as RAYON / Fournisseur. CODE_INTERNE is the internal product id, so a match
+  // is valid even when the barcode differs from the recap row's EAN. (The old
+  // EAN-equality guard rejected every real CODE_INTERNE fallback, dropping some
+  // saisonality / etat values.)
   log('Étapes 21-22 : saise et etat...');
-  const mapSaisEan = buildLookup(recapMmall, 'EAN',          'SAIS');
-  const mapSaisCi  = buildLookup(recapMmall, 'CODE_INTERNE', 'SAIS');
-  const mapEtatEan = buildLookup(recapMmall, 'EAN',          'ETAT');
-  const mapEtatCi  = buildLookup(recapMmall, 'CODE_INTERNE', 'ETAT');
-  const mapCiEan   = buildLookup(recapMmall, 'CODE_INTERNE', 'EAN');
-
-  function lookupValidated(row, pm, fm) {
-    const g = normKey(row['GTIN']);
-    if (g && pm.has(g)) return pm.get(g);
-    const ref = normKey(row['REF']);
-    if (ref && fm.has(ref)) {
-      if (normKey(mapCiEan.get(ref)) === g) return fm.get(ref);
-    }
-    return null;
-  }
+  const mapSaisEan = recapMaps.saisEan;
+  const mapSaisCi  = recapMaps.saisCi;
+  const mapEtatEan = recapMaps.etatEan;
+  const mapEtatCi  = recapMaps.etatCi;
 
   df = df.map(r => ({
     ...r,
-    saise: lookupValidated(r, mapSaisEan, mapSaisCi),
-    etat:  lookupValidated(r, mapEtatEan, mapEtatCi),
+    saise: lookupFallback(r, 'GTIN', mapSaisEan, 'REF', mapSaisCi),
+    etat:  lookupFallback(r, 'GTIN', mapEtatEan, 'REF', mapEtatCi),
   }));
 
   // ── Build catalogue sheet ─────────────────────────────────
-  const prixBarre = df.length > 0 ? (findBarreCol(Object.keys(df[0])) ?? barreCol) : barreCol;
-  df = df.map(r => ({ ...r, 'PRIX BARRÉ': r['PRIX BARRÉ'] ?? r[prixBarre] ?? null }));
+  // PRIX and PRIX BARRÉ are stored as text in the source file; emit them as
+  // numbers (matching the reference workbook). STOCK stays text, also as in
+  // the reference. __orig_prix / __orig_prix_barre are the numeric versions.
+  df = df.map(r => ({
+    ...r,
+    'PRIX':       isNum(r.__orig_prix)       ? r.__orig_prix       : null,
+    'PRIX BARRÉ': isNum(r.__orig_prix_barre) ? r.__orig_prix_barre : null,
+  }));
 
   const CAT_COLS = [
     'MODIFIER','GTIN','REF','SKU','TITLE',
@@ -426,8 +499,10 @@ async function pipeline() {
   const BAISSE_COLS = ['MODIFIER','GTIN','REF','SKU','TITLE',
     'ATTRIBUTE CLE','ATTRIBUTE VALEUR','STOCK','NV PRIX','PRIX BARRÉ'];
 
+  // Rule : products on the "exclus" list (flagged in "l'oreal") are excluded
+  // from destockage — removed from SKU baisse only, kept for augmentation.
   const dfBaisse = df
-    .filter(r => r.action === ACTION_DOWN)
+    .filter(r => r.action === ACTION_DOWN && !r["l'oreal"])
     .map(r => ({
       'MODIFIER':        MODIFIER_FLAG,
       'GTIN':            r['GTIN'],
