@@ -91,10 +91,31 @@ function sheetFromWb(wb, sheetHint) {
   return wb.Sheets[sName];
 }
 
-function readSheet(file, sheetHint) {
-  return readWorkbook(file).then(wb =>
-    XLSX.utils.sheet_to_json(sheetFromWb(wb, sheetHint), { defval: null })
-  );
+// Certain exports (ex. Recap Marjane) placent des lignes de bandeau au-dessus
+// de la vraie ligne d'en-tête. On cherche dans les ~25 premières lignes celle
+// qui contient toutes les colonnes repères (comparaison insensible à la casse).
+function findHeaderRow(ws, markers) {
+  if (!markers || !markers.length || !ws['!ref']) return 0;
+  const full  = XLSX.utils.decode_range(ws['!ref']);
+  const probe = XLSX.utils.sheet_to_json(ws, {
+    header: 1, defval: null, blankrows: true,
+    range: { s: { r: full.s.r, c: full.s.c },
+             e: { r: Math.min(full.s.r + 24, full.e.r), c: full.e.c } },
+  });
+  const want = markers.map(m => m.trim().toLowerCase());
+  for (let i = 0; i < probe.length; i++) {
+    const cells = probe[i].map(v => v === null ? '' : String(v).trim().toLowerCase());
+    if (want.every(m => cells.includes(m))) return full.s.r + i;
+  }
+  return 0;
+}
+
+function readSheet(file, sheetHint, headerMarkers) {
+  return readWorkbook(file).then(wb => {
+    const ws = sheetFromWb(wb, sheetHint);
+    const headerRow = findHeaderRow(ws, headerMarkers);
+    return XLSX.utils.sheet_to_json(ws, { defval: null, range: headerRow });
+  });
 }
 
 // Recap mmall is enormous (~292k rows × 43 cols → a 513 MB sheet XML). Running
@@ -102,7 +123,7 @@ function readSheet(file, sheetHint) {
 // SheetJS "dense" mode (fast, ~40 s) and walk only the 7 columns we actually
 // use, building every lookup Map in a couple of passes — then let the giant
 // cell store be garbage-collected. Returns the resolved column indexes + rows.
-const RECAP_COLS = ['EAN', 'CODE_INTERNE', 'PA_NET', 'LIB_RAY', 'LIB_FOURNISSEUR', 'SAIS', 'ETAT'];
+const RECAP_COLS = ['EAN', 'CODE_INTERNE', 'PA_NET', 'LIB_RAY', 'LIB_FOURNISSEUR', 'SAIS', 'ETAT', 'PV_TTC'];
 
 async function readRecapDense(file, sheetHint, wantCols) {
   const wb = await readWorkbook(file, {
@@ -113,28 +134,34 @@ async function readRecapDense(file, sheetHint, wantCols) {
   const nRows = range.e.r + 1, nCols = range.e.c + 1;
   // Dense rows live under ws['!data'] (SheetJS ≥ 0.20) or directly on ws[r] (older).
   const dataRows = ws['!data'] || ws;
-  const hdr = dataRows[0] || [];
-  const idx = {};
-  for (let c = 0; c < nCols; c++) {
-    const cell = hdr[c];
-    if (cell && cell.v != null) {
-      const name = String(cell.v).trim();
-      if (wantCols.includes(name) && !(name in idx)) idx[name] = c;
+  // L'en-tête n'est pas forcément en ligne 1 (lignes de bandeau possibles) :
+  // on cherche dans les 25 premières lignes celle qui contient toutes les colonnes.
+  let hdrRow = -1, idx = {};
+  for (let r = 0; r < Math.min(25, nRows) && hdrRow === -1; r++) {
+    const hdr = dataRows[r] || [];
+    const cand = {};
+    for (let c = 0; c < nCols; c++) {
+      const cell = hdr[c];
+      if (cell && cell.v != null) {
+        const name = String(cell.v).trim();
+        if (wantCols.includes(name) && !(name in cand)) cand[name] = c;
+      }
     }
+    if (wantCols.every(w => w in cand)) { hdrRow = r; idx = cand; }
   }
-  for (const c of wantCols) {
-    if (!(c in idx)) throw new Error(`Colonne '${c}' introuvable dans Recap mmall.`);
+  if (hdrRow === -1) {
+    throw new Error(`Colonnes ${wantCols.join(', ')} introuvables dans Recap mmall.`);
   }
-  return { nRows, dataRows, idx };
+  return { nRows, dataRows, idx, hdrRow };
 }
 
 // Build a Map(normKey(keyCol) -> valueCol) from a dense recap context, using
 // the exact same skip rules as buildLookup (first non-null value wins).
 function denseLookup(ctx, keyCol, valueCol) {
-  const { nRows, dataRows, idx } = ctx;
+  const { nRows, dataRows, idx, hdrRow } = ctx;
   const ki = idx[keyCol], vi = idx[valueCol];
   const map = new Map();
-  for (let r = 1; r < nRows; r++) {
+  for (let r = hdrRow + 1; r < nRows; r++) {
     const row = dataRows[r];
     if (!row) continue;
     const kc = row[ki];
@@ -165,6 +192,8 @@ async function loadRecapMaps(file, sheetHint) {
     etatEan: denseLookup(ctx, 'EAN',          'ETAT'),
     etatCi:  denseLookup(ctx, 'CODE_INTERNE', 'ETAT'),
     ciEan:   denseLookup(ctx, 'CODE_INTERNE', 'EAN'),
+    pvTtcEan: denseLookup(ctx, 'EAN',          'PV_TTC'),
+    pvTtcCi:  denseLookup(ctx, 'CODE_INTERNE', 'PV_TTC'),
   };
   return maps;
 }
@@ -178,7 +207,11 @@ function normKey(value) {
   }
   const s = String(value).trim();
   if (s === '' || s.toLowerCase() === 'nan') return null;
-  const n = parseFloat(s);
+  // Number(), not parseFloat(): parseFloat silently truncates "3046449-JAUNE"
+  // to 3046449, which can spuriously collide with an unrelated CODE_INTERNE.
+  // Excel's VLOOKUP treats such values as literal text, never matching a pure
+  // numeric key — Number() rejects the whole string instead, matching that.
+  const n = Number(s);
   if (!isNaN(n) && isFinite(n)) {
     if (Number.isInteger(n)) return String(n);
     if (Math.abs(n - Math.round(n)) < 1e-6) return String(Math.round(n));
@@ -218,6 +251,22 @@ function lookupFallback(row, pk, pm, fk, fm) {
   return null;
 }
 
+// Same as lookupFallback, but only accepts a Code Interne fallback match when
+// the matched Récap row's own EAN equals our GTIN (ciEanMap: CODE_INTERNE ->
+// EAN). Without this guard, a shared Code Interne across product variants
+// (different GTINs, one base internal code) can silently borrow SAIS/État
+// from an unrelated product — confirmed against the manual reference.
+function lookupFallbackGuarded(row, pk, pm, fk, fm, ciEanMap) {
+  const k1 = normKey(row[pk]);
+  if (k1 !== null && pm.has(k1)) return pm.get(k1);
+  const k2 = normKey(row[fk]);
+  if (k2 !== null && fm.has(k2)) {
+    const matchedEan = normKey(ciEanMap.get(k2));
+    if (matchedEan !== null && matchedEan === k1) return fm.get(k2);
+  }
+  return null;
+}
+
 function findBarreCol(keys) {
   return keys.find(c => c.toUpperCase().includes('BARR')) ?? null;
 }
@@ -244,16 +293,16 @@ async function pipeline() {
 
   const [mmall, marj1, marj2, marj3, baseRetail, liquidation, exclus,
          margeMin, paReception, recapMarjane] = await Promise.all([
-    readSheet(files.mmall,        'catalogue'),
-    readSheet(files.marj1,        'catalogue'),
-    readSheet(files.marj2,        'catalogue'),
-    readSheet(files.marj3,        'catalogue'),
-    readSheet(files.baseRetail,   'Feuil1'),
-    readSheet(files.liquidation,  'pour ajustement'),
-    readSheet(files.exclus,       'Feuil1'),
-    readSheet(files.margeMin,     'Feuil1'),
-    readSheet(files.paReception,  'Feuil2'),
-    readSheet(files.recapMarjane, 'Sheet1'),
+    readSheet(files.mmall,        'catalogue',       ['GTIN', 'PRIX']),
+    readSheet(files.marj1,        'catalogue',       ['GTIN', 'PRIX']),
+    readSheet(files.marj2,        'catalogue',       ['GTIN', 'PRIX']),
+    readSheet(files.marj3,        'catalogue',       ['GTIN', 'PRIX']),
+    readSheet(files.baseRetail,   'Feuil1',          ['GTIN_octopia', 'productid']),
+    readSheet(files.liquidation,  'pour ajustement', ['SKU']),
+    readSheet(files.exclus,       'Feuil1',          ['EAN']),
+    readSheet(files.margeMin,     'Feuil1',          ['RAYON']),
+    readSheet(files.paReception,  'Feuil2',          ['Code article']),
+    readSheet(files.recapMarjane, 'Sheet1',          ['code interne', 'Gencode', 'Qte stock']),
   ]);
 
   log(`Actif mmall chargé : ${mmall.length} lignes.`);
@@ -301,13 +350,18 @@ async function pipeline() {
   df = df.filter(r => r.type && String(r.type).toUpperCase().includes(TYPE_FILTER));
   log(`Après filtre ${TYPE_FILTER} : ${df.length} lignes.`);
 
-  // ── Step 4 : liquidation ──────────────────────────────────
-  log('Étape 4 : filtre liquidation...');
+  // ── Step 4 : liquidation → "Liste ne pas toucher" flag ────
+  // These SKUs stay in the catalogue and remain eligible for price decreases;
+  // they're only blocked from price increases (see SKU augmentation filter below).
+  log("Étape 4 : indicateur 'Liste ne pas toucher' (liquidation)...");
   const liqSkus = new Set(
     liquidation.map(r => normKey(r['SKU'])).filter(Boolean)
   );
-  df = df.filter(r => !liqSkus.has(normKey(r['SKU'])));
-  log(`Après filtre liquidation : ${df.length} lignes.`);
+  df = df.map(r => {
+    const k = normKey(r['SKU']);
+    return { ...r, 'Liste ne pas toucher': (k && liqSkus.has(k)) ? r['SKU'] : null };
+  });
+  log(`Indicateur liquidation posé sur ${df.filter(r => r['Liste ne pas toucher']).length} lignes.`);
 
   // ── Step 5 : exclus (l'Oréal) ─────────────────────────────
   log("Étape 5 : indicateur l'Oréal...");
@@ -331,15 +385,26 @@ async function pipeline() {
       [`Stock Marjane ${i+1}`]: mapStock.get(normKey(r['GTIN'])) ?? null,
     }));
   }
-  df = df.filter(r =>
-    isNum(r['Prix Marjane 1']) || isNum(r['Prix Marjane 2']) || isNum(r['Prix Marjane 3'])
-  );
-  log(`Après filtre prix Marjane : ${df.length} lignes.`);
+  // Step 9 (PV TTC Recap): 4th acceptable price source, both for the survival
+  // filter and for Min Prix Marjane (step 8 below). Validated against the
+  // manual reference once the normKey() REF-fallback bug above was fixed.
+  const mapPvTtcEan = recapMaps.pvTtcEan;
+  const mapPvTtcCi  = recapMaps.pvTtcCi;
+  df = df.map(r => ({
+    ...r,
+    'PV TTC Recap': toNum(lookupFallback(r, 'GTIN', mapPvTtcEan, 'REF', mapPvTtcCi) ?? NaN),
+  }));
 
-  // ── Step 8 : Min Prix Marjane ─────────────────────────────
+  df = df.filter(r =>
+    isNum(r['Prix Marjane 1']) || isNum(r['Prix Marjane 2']) || isNum(r['Prix Marjane 3']) ||
+    isNum(r['PV TTC Recap'])
+  );
+  log(`Après filtre prix Marjane + PV TTC Recap : ${df.length} lignes.`);
+
+  // ── Step 8 : Min Prix Marjane (3 magasins + PV TTC Recap) ─
   log('Étape 8 : Min Prix Marjane...');
   df = df.map(r => {
-    const prices = [r['Prix Marjane 1'], r['Prix Marjane 2'], r['Prix Marjane 3']].filter(isNum);
+    const prices = [r['Prix Marjane 1'], r['Prix Marjane 2'], r['Prix Marjane 3'], r['PV TTC Recap']].filter(isNum);
     return { ...r, 'Min Prix Marjane': prices.length ? Math.min(...prices) : NaN };
   });
 
@@ -452,21 +517,22 @@ async function pipeline() {
   });
 
   // ── Steps 21-22 : saise + etat ───────────────────────────
-  // Lookup on GTIN (EAN) first, then fall back to CODE_INTERNE — same pattern
-  // as RAYON / Fournisseur. CODE_INTERNE is the internal product id, so a match
-  // is valid even when the barcode differs from the recap row's EAN. (The old
-  // EAN-equality guard rejected every real CODE_INTERNE fallback, dropping some
-  // saisonality / etat values.)
+  // Lookup on GTIN (EAN) first, then fall back to CODE_INTERNE, guarded: the
+  // fallback is only accepted if the matched Récap row's own EAN equals our
+  // GTIN. Validated against the 07/09 manual reference — without this guard,
+  // products that share a base Code Interne across GTIN variants (e.g. color
+  // variants) can spuriously inherit SAIS/État from a different variant.
   log('Étapes 21-22 : saise et etat...');
   const mapSaisEan = recapMaps.saisEan;
   const mapSaisCi  = recapMaps.saisCi;
   const mapEtatEan = recapMaps.etatEan;
   const mapEtatCi  = recapMaps.etatCi;
+  const mapCiEan   = recapMaps.ciEan;
 
   df = df.map(r => ({
     ...r,
-    saise: lookupFallback(r, 'GTIN', mapSaisEan, 'REF', mapSaisCi),
-    etat:  lookupFallback(r, 'GTIN', mapEtatEan, 'REF', mapEtatCi),
+    saise: lookupFallbackGuarded(r, 'GTIN', mapSaisEan, 'REF', mapSaisCi, mapCiEan),
+    etat:  lookupFallbackGuarded(r, 'GTIN', mapEtatEan, 'REF', mapEtatCi, mapCiEan),
   }));
 
   // ── Build catalogue sheet ─────────────────────────────────
@@ -486,7 +552,7 @@ async function pipeline() {
     'Prix Marjane 1','Stock Marjane 1',
     'Prix Marjane 2','Stock Marjane 2',
     'Prix Marjane 3','Stock Marjane 3',
-    'Min Prix Marjane',
+    'Min Prix Marjane','PV TTC Recap',
     'PA RECAP','PA Réception','PA Moyen',
     'MARGE RECAP','MARGE Réception','MARGE Moyen',
     'RAYON','Fournisseur','MIN %',
@@ -522,6 +588,8 @@ async function pipeline() {
   const AUG_COLS = ['MODIFIER','GTIN','REF','SKU','TITLE',
     'ATTRIBUTE CLE','ATTRIBUTE VALEUR','STOCK','NV PRIX','NV PRIX BARRÉ'];
 
+  // "Liste ne pas toucher" is informational only (matches the manual reference,
+  // which flags these rows via a live VLOOKUP but does not exclude them here).
   const dfAugment = df
     .filter(r => r.action === ACTION_UP && r.saise === SAIS_PERMANENT && r.etat === ETAT_ACTIF)
     .map(r => {
