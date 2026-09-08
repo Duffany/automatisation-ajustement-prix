@@ -191,7 +191,6 @@ async function loadRecapMaps(file, sheetHint) {
     saisCi:  denseLookup(ctx, 'CODE_INTERNE', 'SAIS'),
     etatEan: denseLookup(ctx, 'EAN',          'ETAT'),
     etatCi:  denseLookup(ctx, 'CODE_INTERNE', 'ETAT'),
-    ciEan:   denseLookup(ctx, 'CODE_INTERNE', 'EAN'),
     pvTtcEan: denseLookup(ctx, 'EAN',          'PV_TTC'),
     pvTtcCi:  denseLookup(ctx, 'CODE_INTERNE', 'PV_TTC'),
   };
@@ -251,21 +250,6 @@ function lookupFallback(row, pk, pm, fk, fm) {
   return null;
 }
 
-// Same as lookupFallback, but only accepts a Code Interne fallback match when
-// the matched Récap row's own EAN equals our GTIN (ciEanMap: CODE_INTERNE ->
-// EAN). Without this guard, a shared Code Interne across product variants
-// (different GTINs, one base internal code) can silently borrow SAIS/État
-// from an unrelated product — confirmed against the manual reference.
-function lookupFallbackGuarded(row, pk, pm, fk, fm, ciEanMap) {
-  const k1 = normKey(row[pk]);
-  if (k1 !== null && pm.has(k1)) return pm.get(k1);
-  const k2 = normKey(row[fk]);
-  if (k2 !== null && fm.has(k2)) {
-    const matchedEan = normKey(ciEanMap.get(k2));
-    if (matchedEan !== null && matchedEan === k1) return fm.get(k2);
-  }
-  return null;
-}
 
 function findBarreCol(keys) {
   return keys.find(c => c.toUpperCase().includes('BARR')) ?? null;
@@ -517,22 +501,23 @@ async function pipeline() {
   });
 
   // ── Steps 21-22 : saise + etat ───────────────────────────
-  // Lookup on GTIN (EAN) first, then fall back to CODE_INTERNE, guarded: the
-  // fallback is only accepted if the matched Récap row's own EAN equals our
-  // GTIN. Validated against the 07/09 manual reference — without this guard,
-  // products that share a base Code Interne across GTIN variants (e.g. color
-  // variants) can spuriously inherit SAIS/État from a different variant.
+  // Lookup on GTIN (EAN) first, then fall back to CODE_INTERNE — same pattern
+  // as RAYON / Fournisseur. No EAN-equality guard: an earlier attempt at one
+  // was found to reject genuinely correct matches (confirmed by comparing
+  // product titles — Récap frequently lists a different EAN than Actif mmall
+  // for the exact same product under a shared Code Interne). The manual
+  // reference leaving these blank looks like a gap in its own VLOOKUP, not a
+  // rule to replicate.
   log('Étapes 21-22 : saise et etat...');
   const mapSaisEan = recapMaps.saisEan;
   const mapSaisCi  = recapMaps.saisCi;
   const mapEtatEan = recapMaps.etatEan;
   const mapEtatCi  = recapMaps.etatCi;
-  const mapCiEan   = recapMaps.ciEan;
 
   df = df.map(r => ({
     ...r,
-    saise: lookupFallbackGuarded(r, 'GTIN', mapSaisEan, 'REF', mapSaisCi, mapCiEan),
-    etat:  lookupFallbackGuarded(r, 'GTIN', mapEtatEan, 'REF', mapEtatCi, mapCiEan),
+    saise: lookupFallback(r, 'GTIN', mapSaisEan, 'REF', mapSaisCi),
+    etat:  lookupFallback(r, 'GTIN', mapEtatEan, 'REF', mapEtatCi),
   }));
 
   // ── Build catalogue sheet ─────────────────────────────────
